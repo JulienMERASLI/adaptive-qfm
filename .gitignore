@@ -1,0 +1,4 @@
+datasets/
+venv/
+audio.mp3
+__pycache__
