@@ -1,4 +1,5 @@
 import logging
+import os
 from pathlib import Path
 from typing import cast
 import librosa
@@ -190,7 +191,6 @@ def extract_dataset_features(
 	*,
 	sample_rate: int = 22050,
 	hop_size: int = 512,
-	max_workers: int = 8,
 	n_samples: int = 60,
 	overwrite: bool = False,
 ) -> Path:
@@ -220,8 +220,6 @@ def extract_dataset_features(
 	)
 	if not audio_paths:
 		raise FileNotFoundError(f"No supported audio files found in {input_dir}")
-	if max_workers < 1:
-		raise ValueError("max_workers must be at least 1")
 	if n_samples < 1:
 		raise ValueError("n_samples must be at least 1")
 
@@ -263,8 +261,8 @@ def extract_dataset_features(
 			for audio_path in audio_paths
 		]
 
-		with ProcessPoolExecutor(max_workers=max_workers) as executor:
-			while next_file_number < len(arguments) and len(pending) < max_workers:
+		with ProcessPoolExecutor() as executor:
+			while next_file_number < len(arguments) and len(pending) < cast(int, os.cpu_count()):
 				if next_file_number in completed_indices:
 					next_file_number += 1
 					continue

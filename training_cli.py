@@ -172,7 +172,6 @@ train_parser.set_defaults(
 		clustering=args.clustering,
 		sample_rate=args.sample_rate,
 		hop_size=args.hop_size,
-		max_workers=args.max_workers,
 		n_clusters=args.n_clusters,
 		extract_features=args.extract_features
 	)

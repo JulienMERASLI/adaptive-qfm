@@ -360,3 +360,14 @@ def data_from_file(
 		setattr(wrapper, "compute", func)
 		return cast(DataFromFileCallable[..., R], wrapper)
 	return decorator
+
+def chunk_mean(arr, N, axis=0):
+    arr = np.asarray(arr)
+
+    if arr.shape[axis] % N != 0:
+        raise ValueError("Axis length must be divisible by N")
+
+    shape = list(arr.shape)
+    shape[axis:axis+1] = [shape[axis] // N, N]
+
+    return arr.reshape(shape).mean(axis=axis+1)

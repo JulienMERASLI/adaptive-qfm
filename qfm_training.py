@@ -478,7 +478,7 @@ def _write_unigram_archive(
 			payload[f"{name}_cluster_ids"] = cluster_ids[name]
 	np.savez_compressed(path, **payload)  # pyright: ignore[reportArgumentType]
 
-def build_unigram_kmm(assignments, name: str, min_presence: float, windows_per_segment: int):
+def build_unigram_kmm(assignments, name: str, min_presence: float, windows_per_segment: int, inference=False, unigram_archive_path: str = ""):
 	if assignments.ndim != 1:
 		raise ValueError(
 			f"K-means assignments for {name} must be 1D, got {assignments.shape}"
@@ -487,36 +487,61 @@ def build_unigram_kmm(assignments, name: str, min_presence: float, windows_per_s
 		raise ValueError(f"K-means assignments for {name} are empty")
 	if np.any(assignments < 0):
 		raise ValueError(f"K-means assignments for {name} contain negatives")
-	n_clusters = int(assignments.max()) + 1
-	presence = np.bincount(
-		assignments.astype(np.int64, copy=False),
-		minlength=n_clusters,
-	) / assignments.size
 
-	keep = presence >= min_presence
-	kept_ids = np.flatnonzero(keep)
-	if kept_ids.size == 0:
-		raise ValueError(
-			f"All K-means codebook columns for {name} are below "
-			f"min_presence={min_presence}"
-		)
-	assignment_ids = assignments.astype(np.int64, copy=False)
-	row_mask = keep[assignment_ids]
-	observation_count = assignments.size
-	if observation_count % windows_per_segment != 0:
-		raise ValueError(
-			f"K-means assignments for {name} contain "
-			f"{observation_count} observations, which is not divisible "
-			f"by windows_per_segment={windows_per_segment}"
-		)
-	track_count = observation_count // windows_per_segment
-	rows = np.flatnonzero(row_mask)
-	remapped = np.searchsorted(kept_ids, assignment_ids[row_mask])
-	window_rows = rows // windows_per_segment
+	if (not inference):
+		n_clusters = int(assignments.max()) + 1
+		presence = np.bincount(
+			assignments.astype(np.int64, copy=False),
+			minlength=n_clusters,
+		) / assignments.size
 
-	return window_rows, remapped, track_count, kept_ids, presence
+		keep = presence >= min_presence
+		kept_ids = np.flatnonzero(keep)
+		if kept_ids.size == 0:
+			raise ValueError(
+				f"All K-means codebook columns for {name} are below "
+				f"min_presence={min_presence}"
+			)
+		assignment_ids = assignments.astype(np.int64, copy=False)
+		row_mask = keep[assignment_ids]
+		observation_count = assignments.size
+		if observation_count % windows_per_segment != 0:
+			raise ValueError(
+				f"K-means assignments for {name} contain "
+				f"{observation_count} observations, which is not divisible "
+				f"by windows_per_segment={windows_per_segment}"
+			)
+		track_count = observation_count // windows_per_segment
+		rows = np.flatnonzero(row_mask)
+		remapped = np.searchsorted(kept_ids, assignment_ids[row_mask])
+		window_rows = rows // windows_per_segment
+	else:
+		kept_ids = np.array(_read_unigram_archive(Path(unigram_archive_path), "kmeans")[1][name])
+		assignment_ids = assignments.astype(np.int64, copy=False)
 
-def build_unigram_gmm(assignments, name: str, min_presence: float, windows_per_segment: int):
+		# Keep only assignments belonging to the retained clusters
+		row_mask = np.isin(assignment_ids, kept_ids)
+
+		# Original positions of the retained observations
+		rows = np.flatnonzero(row_mask)
+
+		# Remap original cluster IDs to [0, len(kept_ids) - 1]
+		remapped = np.searchsorted(kept_ids, assignment_ids[row_mask])
+
+		observation_count = assignments.size
+		if observation_count % windows_per_segment != 0:
+			raise ValueError(
+				f"K-means assignments for {name} contain "
+				f"{observation_count} observations, which is not divisible "
+				f"by windows_per_segment={windows_per_segment}"
+			)
+
+		track_count = observation_count // windows_per_segment
+		window_rows = rows // windows_per_segment
+
+	return window_rows, remapped, track_count, kept_ids
+
+def build_unigram_gmm(assignments, name: str, min_presence: float, windows_per_segment: int, inference=False, unigram_archive_path: str = ""):
 	if assignments.ndim != 2:
 		raise ValueError(
 			f"GMM probabilities for {name} must be 2D, got {assignments.shape}"
@@ -525,31 +550,56 @@ def build_unigram_gmm(assignments, name: str, min_presence: float, windows_per_s
 		raise ValueError(f"GMM probabilities for {name} have no codebook vectors")
 	if np.any(~np.isfinite(assignments)) or np.any(assignments < 0):
 		raise ValueError(f"GMM probabilities for {name} are invalid")
-	presence = assignments.mean(axis=0)
-	keep = presence >= min_presence
-	kept_ids = np.flatnonzero(keep)
-	if kept_ids.size == 0:
-		raise ValueError(
-			f"All GMM codebook columns for {name} are below "
-			f"min_presence={min_presence}"
-		)
-	probabilities = assignments[:, kept_ids]
-	row_totals = probabilities.sum(axis=1, keepdims=True)
-	if np.any(row_totals <= 0):
-		raise ValueError(
-			f"Filtering GMM codebook columns leaves empty rows for {name}"
-		)
-	observation_count = assignments.shape[0]
-	if observation_count % windows_per_segment != 0:
-		raise ValueError(
-			f"GMM probabilities for {name} contain "
-			f"{observation_count} observations, which is not divisible "
-			f"by windows_per_segment={windows_per_segment}"
-		)
-	track_count = observation_count // windows_per_segment
-	normalized = probabilities / row_totals
+	if (not inference):
+		presence = assignments.mean(axis=0)
+		keep = presence >= min_presence
+		kept_ids = np.flatnonzero(keep)
+		if kept_ids.size == 0:
+			raise ValueError(
+				f"All GMM codebook columns for {name} are below "
+				f"min_presence={min_presence}"
+			)
+		probabilities = assignments[:, kept_ids]
+		row_totals = probabilities.sum(axis=1, keepdims=True)
+		if np.any(row_totals <= 0):
+			raise ValueError(
+				f"Filtering GMM codebook columns leaves empty rows for {name}"
+			)
+		observation_count = assignments.shape[0]
+		if observation_count % windows_per_segment != 0:
+			raise ValueError(
+				f"GMM probabilities for {name} contain "
+				f"{observation_count} observations, which is not divisible "
+				f"by windows_per_segment={windows_per_segment}"
+			)
+		track_count = observation_count // windows_per_segment
+		normalized = probabilities / row_totals
+	else:
+		kept_ids = np.array(_read_unigram_archive(Path(unigram_archive_path), "gmm")[1][name])
+		# Keep only the codebook columns retained during training
+		probabilities = assignments[:, kept_ids]
 
-	return normalized, track_count, kept_ids, presence
+		# Renormalize probabilities after filtering columns
+		row_totals = probabilities.sum(axis=1, keepdims=True)
+		if np.any(row_totals <= 0):
+			raise ValueError(
+				f"Filtering GMM codebook columns leaves empty rows for {name}"
+			)
+
+		normalized = probabilities / row_totals
+
+		observation_count = assignments.shape[0]
+		if observation_count % windows_per_segment != 0:
+			raise ValueError(
+				f"GMM probabilities for {name} contain "
+				f"{observation_count} observations, which is not divisible "
+				f"by windows_per_segment={windows_per_segment}"
+			)
+
+		track_count = observation_count // windows_per_segment
+
+
+	return normalized, track_count, kept_ids
 
 @data_from_file(
 	dataset_name="fma_small",
@@ -562,6 +612,8 @@ def build_unigram_dataset_features(
 	clustering: str,
 	min_presence: float = 0.001,
 	windows_per_segment: int = 60,
+	inference=False,
+	unigram_archive_path: str = ""
 ):
 	"""Convert clustering assignments into one matrix per feature group.
 
@@ -586,8 +638,8 @@ def build_unigram_dataset_features(
 	for feature_number, name in enumerate(FEATURE_NAMES, start=1):
 		assignments = np.asarray(source[name])
 		if clustering == "kmeans":
-			window_rows, remapped, track_count, kept_ids, presence = build_unigram_kmm(
-				assignments, name, min_presence, windows_per_segment
+			window_rows, remapped, track_count, kept_ids = build_unigram_kmm(
+				assignments, name, min_presence, windows_per_segment, inference=inference, unigram_archive_path=unigram_archive_path
 			)
 			unigrams[name] = sparse.csr_matrix(
 				(
@@ -598,8 +650,8 @@ def build_unigram_dataset_features(
 			)
 			cluster_ids[name] = kept_ids.astype(np.int32, copy=False)
 		else:
-			normalized, track_count, kept_ids, presence = build_unigram_gmm(
-				assignments, name, min_presence, windows_per_segment
+			normalized, track_count, kept_ids = build_unigram_gmm(
+				assignments, name, min_presence, windows_per_segment, inference=inference, unigram_archive_path=unigram_archive_path
 			)
 			unigrams[name] = normalized.reshape(
 				track_count,
@@ -618,7 +670,7 @@ def build_unigram_dataset_features(
 		logging.info(
 			"Retained %d/%d codebook columns for %s",
 			len(cluster_ids[name]),
-			len(presence),
+			len(kept_ids),
 			name,
 		)
 
@@ -642,9 +694,10 @@ def build_unigram_dataset_features(
 def _read_unigram_archive(
 	input_path: Path,
 	clustering: str,
-) -> dict[str, sparse.csr_matrix]:
+) -> tuple[dict[str, sparse.csr_matrix], dict[str, np.ndarray]]:
 	"""Load all feature unigram matrices from a clustering archive."""
 	unigrams: dict[str, sparse.csr_matrix] = {}
+	cluster_ids: dict[str, np.ndarray] = {}
 	with np.load(input_path, allow_pickle=False) as source:
 		for name in FEATURE_NAMES:
 			if clustering == "kmeans":
@@ -657,12 +710,14 @@ def _read_unigram_archive(
 					shape=tuple(source[f"{name}_shape"]),
 					dtype=np.float32,
 				)
+				cluster_ids[name] = source[f"{name}_cluster_ids"]
 			else:
 				matrix = sparse.csr_matrix(
 					np.asarray(source[name], dtype=np.float32)
 				)
+				cluster_ids[name] = source[f"{name}_cluster_ids"]
 			unigrams[name] = matrix
-	return unigrams
+	return unigrams, cluster_ids
 
 def wmf_dataset_features(
 	dataset_name: str = "fma_small",
@@ -754,7 +809,6 @@ def extract_and_sample_features(
 	dataset_name: str = "fma_small",
 	sample_rate: int = 22050,
 	hop_size: int = 512,
-	max_workers: int = 8,
 	n_samples: int = 60,
 ):
 	"""Extract features and sample windows, replacing previous outputs."""
@@ -762,7 +816,6 @@ def extract_and_sample_features(
 		dataset_name,
 		sample_rate=sample_rate,
 		hop_size=hop_size,
-		max_workers=max_workers,
 		n_samples=n_samples,
 		overwrite=True,
 	)
@@ -826,7 +879,7 @@ def train_factorization_stage(
 
 	unigrams = cast(
 		dict[str, sparse.csr_matrix],
-		_read_unigram_archive(unigram_path, clustering),
+		_read_unigram_archive(unigram_path, clustering)[0],
 	)
 	row_counts = {
 		cast(tuple[int, int], matrix.shape)[0] for matrix in unigrams.values()
@@ -1023,7 +1076,6 @@ def train_qfm_model(
 	clustering: str = "kmeans",
 	sample_rate: int = 22050,
 	hop_size: int = 512,
-	max_workers: int = 8,
 	n_clusters: int = 8,
 	extract_features: bool = False,
 ) -> Path:
@@ -1034,7 +1086,6 @@ def train_qfm_model(
 			n_samples=windows_per_segment,
 			sample_rate=sample_rate,
 			hop_size=hop_size,
-			max_workers=max_workers,
 		)
 	compute_G1(
 		dataset_name,
