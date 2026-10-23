@@ -23,6 +23,9 @@ class FeatureExtractor:
 		hopsize=512,
 		patch_seed=None,
 		n_patches=60,
+		sets_included={
+			feature_name: True for feature_name in FEATURE_NAMES
+		}
 	):
 		self.audio = audio
 		self.sr = sr
@@ -35,15 +38,18 @@ class FeatureExtractor:
 		self.melspectrogram = librosa.feature.melspectrogram(S=self.spectrogram, sr=self.sr, hop_length=self.hopsize, n_mels=96)
 		self.log_melspectrogram = librosa.power_to_db(np.abs(self.melspectrogram), ref=np.max)
 
-		self.feature_sets = {
-			feature_name: False for feature_name in FEATURE_NAMES
+		self.feature_sets = sets_included
+		self.addMethods = {
+			"mfcc": self.addMFCC,
+			"cqt": self.addCQT,
+			"rhythmic": self.addRhythmic,
+			"spectral": self.addSpectral,
+			"patches": self.addPatches
 		}
 
-		(self.addMFCC()
-		.addCQT()
-		.addRhythmic()
-		.addSpectral()
-		.addPatches())
+		for feature_name in self.feature_sets:
+			if self.feature_sets[feature_name]:
+				self.addMethods[feature_name]()
 
 
 	def addMFCC(self):
