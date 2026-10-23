@@ -15,11 +15,10 @@ from sklearn.decomposition import PCA
 from sklearn.mixture import GaussianMixture
 from sklearn.preprocessing import RobustScaler, StandardScaler
 
-from features import _flatten_feature_by_dimension, _restore_feature_shape, extract_dataset_features
+from features import FEATURE_NAMES, _flatten_feature_by_dimension, _restore_feature_shape, extract_dataset_features
 from helpers import TaskResult, atomic_write, get_output_dir, write_feature_archive, data_from_file
 
 
-FEATURE_NAMES = ("mfcc", "cqt", "rhythmic", "spectral", "patches")
 PCA_COMPONENT_TARGETS: dict[str, float | str] = {
 	"mfcc": 0.95,
 	"cqt": 0.94,
@@ -478,7 +477,7 @@ def _write_unigram_archive(
 			payload[f"{name}_cluster_ids"] = cluster_ids[name]
 	np.savez_compressed(path, **payload)  # pyright: ignore[reportArgumentType]
 
-def build_unigram_kmm(assignments, name: str, min_presence: float, windows_per_segment: int, inference=False, unigram_archive_path: str = ""):
+def build_unigram_kmeans(assignments, name: str, min_presence: float, windows_per_segment: int, inference=False, unigram_archive_path: str = ""):
 	if assignments.ndim != 1:
 		raise ValueError(
 			f"K-means assignments for {name} must be 1D, got {assignments.shape}"
@@ -511,10 +510,9 @@ def build_unigram_kmm(assignments, name: str, min_presence: float, windows_per_s
 				f"{observation_count} observations, which is not divisible "
 				f"by windows_per_segment={windows_per_segment}"
 			)
-		track_count = observation_count // windows_per_segment
 		rows = np.flatnonzero(row_mask)
 		remapped = np.searchsorted(kept_ids, assignment_ids[row_mask])
-		window_rows = rows // windows_per_segment
+		
 	else:
 		kept_ids = np.array(_read_unigram_archive(Path(unigram_archive_path), "kmeans")[1][name])
 		assignment_ids = assignments.astype(np.int64, copy=False)
@@ -536,8 +534,8 @@ def build_unigram_kmm(assignments, name: str, min_presence: float, windows_per_s
 				f"by windows_per_segment={windows_per_segment}"
 			)
 
-		track_count = observation_count // windows_per_segment
-		window_rows = rows // windows_per_segment
+	window_rows = rows // windows_per_segment
+	track_count = observation_count // windows_per_segment
 
 	return window_rows, remapped, track_count, kept_ids
 
@@ -572,7 +570,6 @@ def build_unigram_gmm(assignments, name: str, min_presence: float, windows_per_s
 				f"{observation_count} observations, which is not divisible "
 				f"by windows_per_segment={windows_per_segment}"
 			)
-		track_count = observation_count // windows_per_segment
 		normalized = probabilities / row_totals
 	else:
 		kept_ids = np.array(_read_unigram_archive(Path(unigram_archive_path), "gmm")[1][name])
@@ -596,8 +593,7 @@ def build_unigram_gmm(assignments, name: str, min_presence: float, windows_per_s
 				f"by windows_per_segment={windows_per_segment}"
 			)
 
-		track_count = observation_count // windows_per_segment
-
+	track_count = observation_count // windows_per_segment
 
 	return normalized, track_count, kept_ids
 
@@ -638,7 +634,7 @@ def build_unigram_dataset_features(
 	for feature_number, name in enumerate(FEATURE_NAMES, start=1):
 		assignments = np.asarray(source[name])
 		if clustering == "kmeans":
-			window_rows, remapped, track_count, kept_ids = build_unigram_kmm(
+			window_rows, remapped, track_count, kept_ids = build_unigram_kmeans(
 				assignments, name, min_presence, windows_per_segment, inference=inference, unigram_archive_path=unigram_archive_path
 			)
 			unigrams[name] = sparse.csr_matrix(
@@ -653,6 +649,7 @@ def build_unigram_dataset_features(
 			normalized, track_count, kept_ids = build_unigram_gmm(
 				assignments, name, min_presence, windows_per_segment, inference=inference, unigram_archive_path=unigram_archive_path
 			)
+
 			unigrams[name] = normalized.reshape(
 				track_count,
 				windows_per_segment,
