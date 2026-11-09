@@ -5,7 +5,6 @@
 
 # Authors: The scikit-learn developers
 # SPDX-License-Identifier: BSD-3-Clause
-
 import numpy as np
 
 from sklearn.base import is_classifier, is_regressor

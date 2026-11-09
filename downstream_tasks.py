@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
-from typing import Generic, TypeVar
+from typing import Generic, Literal, TypeVar
 
 import joblib
 import librosa
@@ -11,9 +11,10 @@ from sklearn.cluster import KMeans
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, rand_score
 
-from features import SEGMENT_DURATION_SECONDS
+from features import SEGMENT_DURATION_SECONDS, flatten_dict
 from helpers import atomic_write, chunk_mean
-from qfm_inference import extract_and_infer_qfm_embeddings
+from qfm_inference import extract_and_infer_qfm_embeddings, extract_features
+from qfm_training import compute_G1
 
 
 T = TypeVar("T")
@@ -60,14 +61,18 @@ def extract_gtzan(path: str = "datasets/GTZAN", sample_rate: int = 22050, y_only
 		"test": [],
 	}
 
-	if (not y_only):
-		for split in ["train", "valid", "test"]:
-			for f in files[split]:
-				try:
+	for split in ["train", "valid", "test"]:
+		for f in files[split]:
+			try:
+					
+				if (not y_only):
 					audio, sr = librosa.load(f"{path}/Data/genres_original/{f.strip()}", sr=sample_rate)
 					extract_chunks(sample_rate, get_genre(f), X[split], Y[split], audio)
-				except Exception as e:
-					print(f"Error loading audio file {f.strip()} for {split} split: {e}")
+				else:
+					for _ in range(N_chunks_GTZAN):
+						Y[split].append(get_genre(f))
+			except Exception as e:
+				print(f"Error loading audio file {f.strip()} for {split} split: {e}")
 
 	return Dataset(
 		X_train=X["train"],
@@ -115,9 +120,52 @@ def compute_embeddings_gtzan(dataset_path: str = "datasets/GTZAN", sample_rate: 
 
 	return train_embeddings, test_embeddings, y_train, y_test
 
+def genre_classification(model: Literal["QFM", "G1"], dataset_path: str = "datasets/GTZAN", sample_rate: int = 22050, hop_size: int = 512, qfm_path = "training/fma_small", clustering_method = "kmeans"):
+	if (model == "QFM"):
+		return genre_classification_qfm(dataset_path, sample_rate, hop_size, qfm_path, clustering_method)
+	else:
+		return genre_classification_g1(dataset_path, sample_rate, hop_size)
+
+def genre_classification_g1(dataset_path: str = "datasets/GTZAN", sample_rate: int = 22050, hop_size: int = 512):
+	started_at = perf_counter()
+			
+	dataset = extract_gtzan(dataset_path, sample_rate)
+	
+	print(f"Dataset loaded in {perf_counter() - started_at:.2f} seconds")
+	started_at = perf_counter()
+
+	X_train, X_valid, X_test = dataset.X_train, dataset.X_valid, dataset.X_test
+	y_train, y_valid, y_test = dataset.y_train, dataset.y_valid, dataset.y_test
+
+	if X_valid is not None and y_valid is not None:
+		X_train.extend(X_valid)
+		y_train.extend(y_valid)
+	features_train = extract_features(X_train, sample_rate, hop_size, "training/gtzan_train_features.npz")
+	features_test = extract_features(X_test, sample_rate, hop_size, "training/gtzan_test_features.npz")
+
+	g1_train= flatten_dict(compute_G1.compute(features_train).result)
+	g1_test= flatten_dict(compute_G1.compute(features_test).result)
+	print(f"G1 computed in {perf_counter() - started_at:.2f} seconds")
+	started_at = perf_counter()
+
+	model = LogisticRegression(max_iter=50000).fit(g1_train, y_train)
+
+	print(f"Model trained in {perf_counter() - started_at:.2f} seconds")
+	started_at = perf_counter()
+
+	atomic_write(Path(f"training/genre_classification_model_G1.joblib"), lambda path: joblib.dump(model, path), ".tmp.joblib")
+
+	print(f"Model saved in {perf_counter() - started_at:.2f} seconds")
+	started_at = perf_counter()
+	predictions = model.predict_proba(g1_test)
+
+	print(f"Predictions computed in {perf_counter() - started_at:.2f} seconds")
+	accuracy = compute_accuracy_genre_classification(y_test, predictions, model)
+
+	return predictions, accuracy
 
 
-def genre_classification(dataset_path: str = "datasets/GTZAN", sample_rate: int = 22050, hop_size: int = 512, qfm_path = "training/fma_small", clustering_method = "kmeans"):
+def genre_classification_qfm(dataset_path: str = "datasets/GTZAN", sample_rate: int = 22050, hop_size: int = 512, qfm_path = "training/fma_small", clustering_method = "kmeans"):
 	dataset_name = qfm_path.split("/")[-1]
 
 	if not Path(f"training/gtzan_train_embeddings_{clustering_method}_{dataset_name}.npy").exists() or not Path(f"training/gtzan_test_embeddings_{clustering_method}_{dataset_name}.npy").exists():
@@ -125,6 +173,7 @@ def genre_classification(dataset_path: str = "datasets/GTZAN", sample_rate: int 
 	else:
 		train_embeddings = np.load(f"training/gtzan_train_embeddings_{clustering_method}_{dataset_name}.npy")
 		test_embeddings = np.load(f"training/gtzan_test_embeddings_{clustering_method}_{dataset_name}.npy")
+
 		dataset = extract_gtzan(dataset_path, sample_rate)
 		y_train, y_test = dataset.y_train, dataset.y_test
 		if dataset.y_valid is not None:
@@ -207,9 +256,9 @@ def compute_metrics_genre_clustering(y_test, predictions):
 
 
 
-# genre_classification_predictions, genre_classification_accuracy = genre_classification(qfm_path="training/fma_small", clustering_method="kmeans")
-# print(genre_classification_accuracy)
+if __name__ == "__main__":
+	genre_classification_predictions, genre_classification_accuracy = genre_classification("G1")
+	print(genre_classification_accuracy)
 
 # genre_clustering_predictions, (genre_clustering_purity, genre_clustering_randindex) = genre_clustering(qfm_path="training/fma_small", clustering_method="gmm")
 # print(f"Genre clustering purity: {genre_clustering_purity}, rand index: {genre_clustering_randindex}")
-

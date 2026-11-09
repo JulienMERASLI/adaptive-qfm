@@ -16,7 +16,7 @@ from tqdm import tqdm
 
 from _accumulated_local_effects import accumulated_local_effects
 from downstream_tasks import compute_accuracy_genre_classification, extract_gtzan
-from features import FEATURE_NAMES, _flatten_feature_by_dimension, _restore_feature_shape
+from features import FEATURE_NAMES, _flatten_feature_by_dimension, _restore_feature_shape, flatten_dict
 from qfm_inference import extract_features, infer_qfm_embeddings
 
 class ModelImportance:
@@ -89,7 +89,7 @@ class ModelImportance:
 
 	def permutation_importance(self, n_features_to_show: int = 10, n_repeats=50) -> tuple[Figure, Axes]:
 		started_at = perf_counter()
-		result = permutation_importance(self.pipeline, self.features_test_df, self.dataset.y_test, scoring=self.score_func, n_repeats=n_repeats, random_state=42)
+		result = permutation_importance(self.pipeline, self.features_test_df, self.dataset.y_test, scoring=self.score_func, n_repeats=n_repeats, random_state=42, n_jobs=-1)
 		sorted_idx = result["importances_mean"].argsort()
 		
 		self.permutation_importance_result = result
@@ -105,9 +105,6 @@ class ModelImportance:
 		print(f"Permutation importance computed in {perf_counter() - started_at:.2f} seconds")
 
 		return fig, ax
-
-	def flatten_dict(self, d: dict[str, np.ndarray]):
-		return np.concatenate([value for value in d.values()], axis=1)
 
 
 	
@@ -157,8 +154,8 @@ class ModelImportance:
 					masked[:, j] = self.background[:, j]
 	
 				return masked
-		background_all = self.flatten_dict(self.features_train)
-		flattened_test = self.flatten_dict(self.features_test)
+		background_all = flatten_dict(self.features_train)
+		flattened_test = flatten_dict(self.features_test)
 
 		background_df = self.convert_3d_to_dataframe(background_all)
 		test_df = self.convert_3d_to_dataframe(flattened_test)
@@ -184,7 +181,7 @@ class ModelImportance:
 		explainer = shap.Explainer(
 			predict_fn,
 			masker,
-			feature_names=self.features_test_df.columns.to_list()
+			feature_names=self.features_test_df.columns.to_list(),
 		)
 
 		shap_values = explainer(test, max_evals=2*len(test_df.columns) + 1) # type: ignore
@@ -199,7 +196,7 @@ class ModelImportance:
 		started_at = perf_counter()
 		results = {}
 
-		flattened_test = self.flatten_dict(self.features_test)
+		flattened_test = flatten_dict(self.features_test)
 
 		def convert(X):
 			X_3d = _restore_feature_shape(X, flattened_test.shape)
@@ -221,33 +218,42 @@ class ModelImportance:
 		fig, ax = self.plot_importances(main_importances, n_features_to_show=n_features_to_show)
 		print(f"ALE importance computed in {perf_counter() - started_at:.2f} seconds")
 		return results, main_importances, fig, ax
-		
-def permutation_importance_genre_classification(model_name: str = "kmeans_fma_small"):
-	model = joblib.load(f"training/genre_classification_model_{model_name}.joblib")
-	dataset = extract_gtzan(y_only=True)
-	importance = ModelImportance(dataset, compute_accuracy_genre_classification, model, qfm_path=f"training/{model_name.split('_', 1)[1]}", clustering_method=model_name.split('_', 1)[0], greater_is_better=True, response_method="predict_proba", dataset_name="gtzan")
-	importance.permutation_importance()
+
+def compute_permutation_importance(importance: ModelImportance, task_name, qfm_model_name, n_features_to_show=10, n_repeats=50, *args, **kwargs):
+	importance.permutation_importance(n_features_to_show=n_features_to_show, n_repeats=n_repeats)
 	r = importance.permutation_importance_result	
 	
 
-	np.savez(f"training/permutation_importance_genre_classification_{model_name}.npz", **r, columns=importance.features_test_df.columns) # pyright: ignore[reportArgumentType]
+	np.savez(f"training/permutation_importance_{task_name}_{qfm_model_name}.npz", **r, columns=importance.features_test_df.columns) # pyright: ignore[reportArgumentType]
+	return r
 
-def shap_importance_genre_classification(model_name: str = "kmeans_fma_small"):
+def compute_shap_importance(importance: ModelImportance, task_name, qfm_model_name, n_samples=2, *args, **kwargs):
+	explainer, shap_values = importance.shap_importance(n_samples=n_samples)
+		
+	np.savez(f"training/shap_importance_{task_name}_{qfm_model_name}.npz", values=shap_values.values, base_values=shap_values.base_values, data=shap_values.data, feature_names=shap_values.feature_names)  # type: ignore
+	return explainer, shap_values
+
+def compute_ale_importance(importance: ModelImportance, task_name, qfm_model_name, n_features_to_show=10, *args, **kwargs):
+	results, main_importances, fig, ax = importance.ale_importance(n_features_to_show=n_features_to_show)
+	np.savez(f"training/ale_importance_{task_name}_{qfm_model_name}.npz", **results, main_importances=np.array(list(main_importances.values())), columns=importance.features_test_df.columns)
+	return results, main_importances
+
+importance_methods = {
+	"permutation": compute_permutation_importance,
+	"shap": compute_shap_importance,
+	"ale": compute_ale_importance
+}
+
+
+def importance(model, dataset, score_func, qfm_model_name, dataset_name, importance_method, greater_is_better, response_method, task_name, *args, **kwargs):
+	importance = ModelImportance(dataset, score_func, model, qfm_path=f"training/{qfm_model_name.split('_', 1)[1]}", clustering_method=qfm_model_name.split('_', 1)[0], greater_is_better=greater_is_better, response_method=response_method, dataset_name=dataset_name)
+	result = importance_methods[importance_method](importance, task_name, qfm_model_name, *args, **kwargs)
+	return result
+
+def importance_genre_classification(importance_method, model_name: str = "kmeans_fma_small", n_features_to_show: int = 10, n_repeats: int = 50, n_samples: int = 100):
 	model = joblib.load(f"training/genre_classification_model_{model_name}.joblib")
 	dataset = extract_gtzan(y_only=True)
-	importance = ModelImportance(dataset, compute_accuracy_genre_classification, model, qfm_path=f"training/{model_name.split('_', 1)[1]}", clustering_method=model_name.split('_', 1)[0], greater_is_better=True, response_method="predict_proba", dataset_name="gtzan")
-	explainer, shap_values = importance.shap_importance(n_samples=2)
-	
-	np.savez(f"training/shap_importance_genre_classification_{model_name}.npz", values=shap_values.values, base_values=shap_values.base_values, data=shap_values.data, feature_names=shap_values.feature_names)  # type: ignore
+	result = importance(model, dataset, compute_accuracy_genre_classification, model_name, "gtzan", importance_method, greater_is_better=True, response_method="predict_proba", task_name="genre_classification", n_features_to_show=n_features_to_show, n_repeats=n_repeats, n_samples=n_samples)
+	return result
 
-def ale_importance_genre_classification(model_name: str = "kmeans_fma_small"):
-	model = joblib.load(f"training/genre_classification_model_{model_name}.joblib")
-	dataset = extract_gtzan(y_only=True)
-	importance = ModelImportance(dataset, compute_accuracy_genre_classification, model, qfm_path=f"training/{model_name.split('_', 1)[1]}", clustering_method=model_name.split('_', 1)[0], greater_is_better=True, response_method="predict_proba", dataset_name="gtzan")
-
-	results, main_importances, fig, ax = importance.ale_importance()
-	np.savez(f"training/ale_importance_genre_classification_{model_name}.npz", **results, main_importances=np.array(list(main_importances.values())), columns=importance.features_test_df.columns)
-
-# permutation_importance_genre_classification()
-# shap_importance_genre_classification()
-ale_importance_genre_classification()
+importance_genre_classification(importance_method="permutation")

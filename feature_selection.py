@@ -19,8 +19,6 @@ def convert_dicts_to_arrays(importances_dict, times_dict):
 def select_features_from_performance_required(performance_required, importances_dict, times_dict):
 	feature_names, importances, times = convert_dicts_to_arrays(importances_dict, times_dict)
 
-	if (np.sum(importances) != 1):
-		raise ValueError("The sum of importances must be equal to 1.")
 	if (performance_required < 0 or performance_required > 1):
 		raise ValueError("The performance required must be between 0 and 1. (percentage of maximum performance)")
 	bounds = optimize.Bounds(0, 1)  # 0 <= x_i <= 1
@@ -36,8 +34,8 @@ def select_features_from_performance_required(performance_required, importances_
 def select_features_from_time_budget(time_budget, importances_dict, times_dict):
 	feature_names, importances, times = convert_dicts_to_arrays(importances_dict, times_dict)
 	
-	if (np.sum(importances) != 1):
-		raise ValueError("The sum of importances must be equal to 1.")
+	if (np.sum(times) != 1):
+		raise ValueError("The sum of times must be equal to 1. (percentage of maximum time)")
 	if (time_budget < 0 or time_budget > 1):
 		raise ValueError("The time budget must be between 0 and 1. (percentage of maximum time)")
 	bounds = optimize.Bounds(0, 1)  # 0 <= x_i <= 1

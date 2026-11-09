@@ -1,7 +1,8 @@
-from __future__ import annotations
-
+from sklearnex import patch_sklearn
+patch_sklearn(verbose=False)
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from time import perf_counter
 from typing import cast
@@ -629,47 +630,55 @@ def build_unigram_dataset_features(
 	if windows_per_segment < 1:
 		raise ValueError("windows_per_segment must be at least 1")
 
-	unigrams: dict[str, np.ndarray | sparse.csr_matrix] = {}
-	cluster_ids: dict[str, np.ndarray] = {}
-	for feature_number, name in enumerate(FEATURE_NAMES, start=1):
+	def build_feature_unigram(
+		name: str,
+	) -> tuple[str, np.ndarray | sparse.csr_matrix, np.ndarray]:
 		assignments = np.asarray(source[name])
 		if clustering == "kmeans":
 			window_rows, remapped, track_count, kept_ids = build_unigram_kmeans(
 				assignments, name, min_presence, windows_per_segment, inference=inference, unigram_archive_path=unigram_archive_path
 			)
-			unigrams[name] = sparse.csr_matrix(
+			unigram = sparse.csr_matrix(
 				(
 					np.ones(window_rows.size, dtype=np.float32),
 					(window_rows, remapped),
 				),
 				shape=(track_count, kept_ids.size),
 			)
-			cluster_ids[name] = kept_ids.astype(np.int32, copy=False)
 		else:
 			normalized, track_count, kept_ids = build_unigram_gmm(
 				assignments, name, min_presence, windows_per_segment, inference=inference, unigram_archive_path=unigram_archive_path
 			)
 
-			unigrams[name] = normalized.reshape(
+			unigram = normalized.reshape(
 				track_count,
 				windows_per_segment,
 				kept_ids.size,
 			).sum(axis=1)
-			cluster_ids[name] = kept_ids.astype(np.int32, copy=False)
-		
-		logging.info(
-			"Built unigram %d/%d for %s: shape=%s",
-			feature_number,
-			len(FEATURE_NAMES),
-			name,
-			np.asarray(unigrams[name].shape),
-		)
-		logging.info(
-			"Retained %d/%d codebook columns for %s",
-			len(cluster_ids[name]),
-			len(kept_ids),
-			name,
-		)
+
+		return name, unigram, kept_ids.astype(np.int32, copy=False)
+
+	unigrams: dict[str, np.ndarray | sparse.csr_matrix] = {}
+	cluster_ids: dict[str, np.ndarray] = {}
+	with ThreadPoolExecutor(max_workers=len(FEATURE_NAMES)) as executor:
+		results = executor.map(build_feature_unigram, FEATURE_NAMES)
+		for feature_number, (name, unigram, kept_ids) in enumerate(results, start=1):
+			unigrams[name] = unigram
+			cluster_ids[name] = kept_ids
+
+			logging.info(
+				"Built unigram %d/%d for %s: shape=%s",
+				feature_number,
+				len(FEATURE_NAMES),
+				name,
+				np.asarray(unigram.shape),
+			)
+			logging.info(
+				"Retained %d/%d codebook columns for %s",
+				len(kept_ids),
+				len(kept_ids),
+				name,
+			)
 
 
 	return TaskResult(

@@ -6,9 +6,9 @@ import librosa
 import numpy as np
 import hashlib
 
+import scipy
 from threadpoolctl import threadpool_limits
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
-
 from helpers import ResumableJob, write_feature_archive
 
 FEATURE_NAMES = ("mfcc", "cqt", "rhythmic", "spectral", "patches")
@@ -380,3 +380,21 @@ def _restore_feature_shape(
 		-1,
 		1,
 	)
+
+
+def flatten_dict(d: dict[str, np.ndarray], sparse=False):
+	if (sparse):
+		return scipy.sparse.hstack(list(d.values()))
+	return np.concatenate(list(d.values()), axis=1)
+
+def convert_flattened_to_dict(flattened: np.ndarray, dimensions: dict[str, int], feature_sets_kept):
+	result = {}
+	start = 0
+	for key, dim in dimensions.items():
+		if (not feature_sets_kept[key]):
+			continue
+		end = start + dim
+		result[key] = flattened[:, start:end]
+		start = end
+	return result
+	
