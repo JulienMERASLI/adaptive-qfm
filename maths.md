@@ -1,22 +1,24 @@
 $\DeclareMathOperator*{\argmax}{arg\,max}
 \DeclareMathOperator*{\argmin}{arg\,min}
-\DeclareMathOperator*{\diag}{diag}
-\DeclareMathOperator*{\vec}{vec}
+\DeclareMathOperator{\diag}{diag}
+\DeclareMathOperator{\vec}{vec}
 \newcommand{\norm}[1]{\left\lVert #1 \right\rVert}
+$
+$\newcommand{\dproduct}[2]{\left\langle #1, #2\right\rangle}
 $
 
 # Numbers
 
 - $M$: total number of features
-  <!-- - $M'$: total number of features after PCA -->
+      <!-- - $M'$: total number of features after PCA -->
 - $s$: number of feature sets
-  <!-- - $\tilde{s}$: number of feature sets kept -->
+      <!-- - $\tilde{s}$: number of feature sets kept -->
 - $M_i$: number of features in set $i$: $M = \displaystyle\sum_{i=1}^{s} M_i$
-  <!-- - $M_i'$: number of features in set $i$ after PCA: $M' = \displaystyle\sum_{i=1}^{s} M_i'$ -->
+      <!-- - $M_i'$: number of features in set $i$ after PCA: $M' = \displaystyle\sum_{i=1}^{s} M_i'$ -->
 - $N$: number of inputs
 - $W$: number of windows per input
 - $\tilde{M}$: number of features kept: $\tilde{M} = \displaystyle\sum_{i \in J} M_i$
-  <!-- - $K$: number of clusters -->
+      <!-- - $K$: number of clusters -->
 - $K_i$: number of clusters kept after filter for feature set $i$
 - $K'$: number of clusters kept after filter: $K' = \displaystyle\sum_{i=1}^{s} K_i$
 - $\tilde{K}$: number of clusters kept after filter for feature sets kept: $\tilde{K} = \displaystyle\sum_{i \in J} K_i$
@@ -30,10 +32,10 @@ $
 - $i \in [\![1,s]\!]$: index for feature sets. can also be $total$ to refer to $QF_{total}$
 - $j \in [\![1,M]\!]$: index for features
 - $j_i \in [\![1,M_i]\!]$: index for features inside set $i$
-  <!-- - $j_i' \in [\![1,M_i']\!]$: index for features inside set $i$ after QF PCA -->
+      <!-- - $j_i' \in [\![1,M_i']\!]$: index for features inside set $i$ after QF PCA -->
 - $w \in [\![1,W]\!]$: index for windows
 - $n \in [\![1,N]\!]$: index for inputs
-  <!-- - $k \in [\![1,K]\!]$: index for clusters -->
+      <!-- - $k \in [\![1,K]\!]$: index for clusters -->
 - $k_i \in [\![1,K_i]\!]$: index for clusters of feature set $i$ after filter
 - $d_i \in [\![1,D_i]\!]$: index for dimension of WMF embedding of feature set $i$
 - $d_i' \in [\![1,D_i + 2M_i]\!]$: index for dimension of block after concatenation of QF and G1 modules of feature set $i$
@@ -94,7 +96,7 @@ $
     \begin{aligned}
     \mathbb{R}^{N \times M_i \times W} &\longrightarrow\mathbb{R}^{N \times M_i' \times W} \\
               {X_i}=(X^{(n, w)}_{i, j_i})_{n, j_i, w} &\longmapsto
-               {L_i^{-1/2}R_i^{T}}({X_i - \bar{X_i}})
+               {\mathscr{l}_i^{-1/2}R_i^{T}}({X_i - \bar{X_i}})
     		   \end{aligned}
       \end{array}\\
     $$
@@ -202,7 +204,7 @@ $
 # Model parameters
 
 <!-- - $\mu_j \in \mathbb{R}, \sigma_j \in \mathbb{R}$: parameters of the standard scaler
-- ${L_i} \in \mathbb{R}^{M_i \times M_i}, {R_i} \in \mathbb{R}^{M_i \times M_i'}$: parameters of the QF PCA
+- ${\mathscr{l}_i} \in \mathbb{R}^{M_i \times M_i}, {R_i} \in \mathbb{R}^{M_i \times M_i'}$: parameters of the QF PCA
 - $m_{i, k} \in \mathbb{R}^{M_i'}$: parameters of the K-Means -->
 
 - $\alpha \in \mathbb{R}, \lambda \in \mathbb{R}, V_i \in \mathbb{R}^{K_i \times D_i}$: parameters of the WMF
@@ -350,7 +352,7 @@ $$
 $$
 
 where all vectors and matrices are written in block form, where each block represents its corresponding feature set.
-We will omit the index $n$ in the following for clarity.
+We omit the index $n$ for clarity.
 For $\tilde{O}_i$, we have:
 
 $$
@@ -372,7 +374,7 @@ This allows us to write:
 
 $$
   \begin{align*}
-  \tilde{O}_i - O_i &= [1_{K'} + \tilde{A_U}(A_U D - 1_{\tilde{K}}) + \alpha \tilde{b_U} - O]_i \\
+  \tilde{O}_i - O_i &= [1_{K'} + \tilde{A_U}(A_U O - 1_{\tilde{K}}) + \alpha \tilde{b_U} - O]_i \\
   &= [(\tilde{A_U}A_U - I_{K'}) O - (\tilde{A_U}A_U - I_{K'}) 1_{K'} + \alpha \tilde{b_U}]_i \\
   &= [(\tilde{A_U}A_U - I_{K'})(O - 1_{K'}) + \alpha \tilde{b_U}]_i \\
   \end{align*}
@@ -430,3 +432,154 @@ $$
 This expression shows that the difference in $W$ depends on the difference in $C$ ($C_i=\diag(O_i)$) that we have written before, the difference in $p$, that should be zero as they are indicator functions, and the difference $(\tilde{p_i} - V_i {W_i})$. The original WMF algorithm tries to minimize this difference (weighted by $C_i$), so here we are trying to minimize its approximation.
 
 All these expressions show that choosing the pseudoinverse of $A_U$ (with ${b_U}_i = 0$) will give the best results for $i \in J$. Thus, the optimization must focus on the remaining coefficients that cannot be recovered from the dimensionality reduction.
+
+Let us parametrize the matrices $\tilde{A_U}$ and $\tilde{b_U}$ by $\theta_U$: $\tilde{A_U} = \mathscr{L}_A(\theta_U), \tilde{b_U} = \mathscr{L}_b(\theta_U)$. We suppose those parametrizations affine and linear respectively ($\mathscr{L}_A(0) = A_U^+ = A_U^T$). We also define the following operator:
+
+$$
+\begin{array}{r@{\;}|l}
+      \mathscr{l}_i: & \begin{aligned}
+      \mathbb{R}^{K'} &\longrightarrow\mathbb{R}^{K_i} \\
+              (O_{i, k_i})_{i} &\longmapsto
+                O_{i, k_i}
+          \end{aligned}
+      \end{array}
+$$
+
+Using the notation
+
+$$
+\left(Z_{\tilde{d}}^{(n)}\right)_{n, \tilde{d}} = \begin{pmatrix}
+    W &
+    G
+    \end{pmatrix}
+$$
+
+We write
+
+$$
+W = \begin{pmatrix}
+    W_1 &
+    \cdots &
+    W_s &
+    W_{total}
+    \end{pmatrix}
+$$
+
+Then
+
+$$
+  \begin{align*}
+    dL &= 2\dproduct{\Delta E}{d\tilde{E}} \\
+    &= 2\dproduct{(\Delta Z)R'}{(d\tilde{Z})R'} \\
+    &= 2\dproduct{((\Delta Z)R')R'^T}{d\tilde{Z}}
+  \end{align*}
+$$
+
+As $dG=0$, using our decomposition of $W$, we will look at each term seperately. From our previous expression, we can compute:
+
+$$
+  d\tilde{W_i} = (V_i^T C_i V_i + \lambda I_{D_i})^{-1}V_i^T \left(d\tilde{C_i}(\tilde{p_i} - V_i \tilde{W_i}) - (\tilde{C_i} - C_i)V_i d\tilde{W_i} + \tilde{C_i}d\tilde{p_i}\right)
+$$
+
+So,
+
+$$
+  \left(I_{D_i} + \mathcal{A}^{-1} \mathcal{B} \right)d\tilde{W_i} = \mathcal{A} ^{-1}V_i^T \left(d\tilde{C_i}(\tilde{p_i} - V_i \tilde{W_i}) + \tilde{C_i}d\tilde{p_i}\right)
+$$
+
+With
+
+$$
+  \mathcal{A} = (V_i^T C_i V_i + \lambda I_{D_i})
+  \\
+  \mathcal{B} = V_i^T(\tilde{C_i} - C_i)V_i
+$$
+
+Then, as $\left(I\_{D_i} + \mathcal{A}^{-1} \mathcal{B} \right)^{-1} = (\mathcal{A} + \mathcal{B})^{-1}\mathcal{A} $, we can write:
+
+$$
+  d\tilde{W_i} = (V_i^T \tilde{C_i} V_i + \lambda I_{D_i})^{-1} V_i^T\left(d\tilde{C_i}(\tilde{p_i} - V_i \tilde{W_i}) + \tilde{C_i}d\tilde{p_i}\right)
+$$
+
+For a conformable matrix $X$, we can write:
+
+$$
+  \begin{align*}
+    \dproduct{X}{d\tilde{W_i}} &= \dproduct{X}{(V_i^T \tilde{C_i} V_i + \lambda I_{D_i})^{-1} V_i^T\left(d\tilde{C_i}(\tilde{p_i} - V_i \tilde{W_i}) +\tilde{C_i}d\tilde{p_i}\right)}\\
+    &= \dproduct{X'}{d\tilde{C_i}} + \dproduct{X''}{d\tilde{p_i}}
+  \end{align*}
+$$
+
+with
+
+$$
+X' = V_i(V_i^T \tilde{C_i} V_i + \lambda I_{D_i})^{-1}X(\tilde{p_i} - V_i \tilde{W_i})^T \\
+X'' = \tilde{C_i}^T V_i (V_i^T \tilde{C_i} V_i + \lambda I_{D_i})^{-1} X
+$$
+
+Then,
+
+$$
+\begin{align*}
+    \dproduct{X'}{d\tilde{C_i}} &= \dproduct{X'}{\diag({d\tilde{O_i}})} \\
+    &= \dproduct{\diag^*(X')}{d\tilde{O_i}}
+  \end{align*}
+$$
+
+As
+
+$$
+\begin{align*}
+    \tilde{O_i} &= 1_{K_i} + \alpha \tilde{U_i}\\
+    &= \mathscr{l}_i(1_{K'} + \alpha (\mathscr{L}_A(\theta_U) A_U U + \mathscr{L}_b(\theta_U)))
+  \end{align*}
+$$
+
+We can write
+
+$$
+  d\tilde{O_i} = \mathscr{l}_i(\alpha \left((\mathscr{L}_A(d\theta_U) - A_U^T\right) A_U U + \mathscr{L}_b(d\theta_U)))
+$$
+
+And
+
+$$
+\begin{align*}
+    \dproduct{X'}{d\tilde{C_i}} &= \dproduct{\mathscr{l}_i^*(\diag^*(X'))}{\alpha (\left((\mathscr{L}_A(d\theta_U) - A_U^T\right)A_U U + \mathscr{L}_b(d\theta_U))} \\
+    &= \dproduct{\mathscr{L}_A^*\left(\alpha \left(\mathscr{l}_i^*(\diag^*(X'))\right) U^T A_U^T \right) \\ + \mathscr{L}_b^*\left(\alpha \left(\mathscr{l}_i^*(\diag^*(X'))\right) \right)}{d\theta_U}
+  \end{align*}
+$$
+
+where $\mathscr{L}_A^* = \left(\mathscr{L}_A - A_U^T\right)^*$.
+
+For $d\tilde{p_i}$, we will approximate it with a logistic function:
+
+$$
+    \tilde{p_i} = \mathbb{1}_{\tilde{U_i} > 0} = \sigma_k(\tilde{U_i})
+$$
+
+with $\displaystyle\sigma_k(x)= \frac{1}{1+e^{-kx}}$ applied element-wise.
+Then, as $\sigma_k'(x) = k \sigma_k(x) (1- \sigma_k(x))$, we denote $\sigma_k'(\tilde{U_i}) = \diag \left(\left(\sigma_k'(\tilde{U_{i, ki}})\right)_{k_i}\right)$ and
+
+$$
+\begin{align*}
+  d\tilde{p_i} &= \sigma_k' (\tilde{U_i}) d\tilde{U_i} \\
+  &= \sigma_k' (\tilde{U_i})\mathscr{l}_i\left((\mathscr{L}_A(d\theta_U) - A_U^T)A_U U + \mathscr{L}_b(d\theta_U)\right)
+\end{align*}
+$$
+
+So
+
+$$
+  \dproduct{X''}{d\tilde{p_i}} = \dproduct{\mathscr{L}_A^*\left(\mathscr{l}_i^*\left(\sigma_k'(\tilde{U_i})X''\right) U^T A_U^T \right) \\ + \mathscr{L}_b^*\left(\mathscr{l}_i^*\left(\sigma_k'(\tilde{U_i})X''\right) \right)}{d\theta_U}
+$$
+
+These expressions allows us to compute the gradient of $L$.
+
+In practice, to limit the size of the optimized parameters, a regularization term is added to the loss:
+
+$$
+  L_{\mathrm{reg}} = L + \lambda_U \norm{\theta_U}^2
+$$
+
+where $\lambda_U \geq 0$ is the regularization coefficient.

@@ -1,12 +1,16 @@
 from itertools import combinations
 from pathlib import Path
 from time import perf_counter
+from typing import cast
 
 import joblib
 import numpy as np
-from scipy.sparse.linalg import LinearOperator, lsqr
+import scipy
+import scipy.optimize
+import scipy.sparse
+from scipy.sparse.linalg import LinearOperator, lsmr
+import scipy.special
 from sklearn.linear_model import LogisticRegression
-import _spsa
 from tqdm import tqdm
 
 from downstream_tasks import compute_accuracy_genre_classification, extract_gtzan
@@ -65,60 +69,60 @@ def build_T_tilde(params, feature_sets_kept, feature_sets_length):
 
 def build_T_tilde_adjoint(GA, Gb, feature_sets_kept, feature_sets_length):
 
-    gradients = []
+	gradients = []
 
-    J = [
-        i for i in range(len(feature_sets_kept))
-        if list(feature_sets_kept.values())[i]
-    ]
+	J = [
+		i for i in range(len(feature_sets_kept))
+		if list(feature_sets_kept.values())[i]
+	]
 
-    row_start = 0
+	row_start = 0
 
-    for i in range(len(feature_sets_length)):
+	for i in range(len(feature_sets_length)):
 
-        size_i = list(feature_sets_length.values())[i]
+		size_i = list(feature_sets_length.values())[i]
 
-        col_start = 0
+		col_start = 0
 
-        for i_prime in J:
+		for i_prime in J:
 
-            size_iprime = list(feature_sets_length.values())[i_prime]
+			size_iprime = list(feature_sets_length.values())[i_prime]
 
-            if i == i_prime:
-                pass
+			if i == i_prime:
+				pass
 
-            else:
-                if i in J:
-                    pass
+			else:
+				if i in J:
+					pass
 
-                else:
-                    block_grad = GA[
-                        row_start:row_start + size_i,
-                        col_start:col_start + size_iprime
-                    ]
+				else:
+					block_grad = GA[
+						row_start:row_start + size_i,
+						col_start:col_start + size_iprime
+					]
 
-                    gradients.append(block_grad.ravel())
+					gradients.append(block_grad.ravel())
 
-            col_start += size_iprime
+			col_start += size_iprime
 
-        if i in J:
-            pass
+		if i in J:
+			pass
 
-        else:
-            block_grad_b = Gb[
-                row_start:row_start + size_i, :
-            ]
+		else:
+			block_grad_b = Gb[
+				row_start:row_start + size_i
+			]
 
-            gradients.append(block_grad_b.ravel())
+			gradients.append(block_grad_b.ravel())
 
-        row_start += size_i
+		row_start += size_i
 
-    return np.concatenate(gradients)
+	return np.concatenate(gradients)
 
 
 def build_transformation(A, b=None):
 	if b is None:
-		return lambda X, N: X @ A.T
+		return lambda X, _: X @ A.T
 	else:
 		return lambda X, N: X @ A.T + np.ones((N, 1)) @ b.T
 
@@ -130,8 +134,6 @@ def compute_delta(X, X_tilde):
 	return deltaX
 
 def get_N_params(feature_sets_kept, feature_sets_length):
-	s = len(feature_sets_kept)
-	J = [i for i in range(len(feature_sets_kept)) if list(feature_sets_kept.values())[i]]
 	Kprime = sum(feature_sets_length.values())
 	Ktilde = sum(feature_sets_length[feature_name] for feature_name in feature_sets_kept if feature_sets_kept[feature_name])
 	return Ktilde * (Kprime - Ktilde), Kprime - Ktilde # blocks for i,j in J are identity for A, and 0 for b.
@@ -170,8 +172,6 @@ def solve_matrix_least_squares(A1, B1, A2, B2, Y, feature_sets_kept, feature_set
 
 	dtype = np.result_type(A1, B1, A2, B2, Y)
 
-	n1 = p1 * q1
-	n2 = p2 * q2
 	n_params_A, n_params_b = get_N_params(feature_sets_kept, feature_sets_length)
 	nvars = n_params_A + n_params_b
 
@@ -208,7 +208,7 @@ def solve_matrix_least_squares(A1, B1, A2, B2, Y, feature_sets_kept, feature_set
 	Y_adjusted = Y.ravel() - c
 
 	# Solve min ||L x - Y||
-	result = lsqr(L, Y_adjusted, x0=x0)
+	result = lsmr(L, Y_adjusted, x0=x0)
 
 	x = result[0]
 
@@ -277,19 +277,33 @@ def optimization_G(features, feature_sets_kept, Mi, transformation_U, scalers, p
 	print(f"Optimization for G completed in {perf_counter() - started_at:.2f} seconds.")
 	return (A_G_tilde, b_G_tilde)
 
-def optimization_U(features, feature_sets_kept, Ki, transformation_G, scalers, pca, n_iterations=100, old_T_U_tilde=None):
+def li_adjoint(A, Kprime, start, feature_name):
+	if (feature_name == "qf_total"):
+		return A
+	A_Kprime = np.zeros((A.shape[0], Kprime))
+	A_Kprime[:, start:start + A.shape[1]] = A
+	return A_Kprime
+
+def diag_2d_to_3d(A):
+	return A[:, :, None] * np.eye(A.shape[1])[None, :, :]
+
+def sigmoid(k, x):
+	return scipy.special.expit(k * x)
+
+def optimization_U(features, feature_sets_kept, Ki, transformation_G, scalers, pca, old_T_U_tilde=None, k_sigmoid=100, use_pi_tilde_approx=False, force_positive_parameters=True, l2_regularization=0.2):
 	N_params_A, N_params_b = get_N_params(feature_sets_kept, Ki)
 	if (N_params_A + N_params_b == 0):
 		return build_T_tilde([], feature_sets_kept, Ki)
 	
 	started_at = perf_counter()
 
-	U = infer_qfm_embeddings(features, to_return="unigram", feature_sets_kept=feature_sets_kept)	
+	U = cast(dict, infer_qfm_embeddings(features, to_return="unigram", feature_sets_kept=feature_sets_kept))	
 	W = compute_wmf(U)
 	
 	T_U = T(feature_sets_kept, Ki)
 
 	N = list(W.values())[0].shape[0]
+	ones = np.ones((N, 1))
 
 	all_feature_sets = {feature_name: True for feature_name in FEATURE_NAMES}
 
@@ -298,29 +312,140 @@ def optimization_U(features, feature_sets_kept, Ki, transformation_G, scalers, p
 
 	U_kept = transform(U, lambda X: build_transformation(T_U)(X, N), feature_sets_kept, sparse_format=True)
 
-	def to_optimize(T_U_tilde_parameters):
+	indices_W = {}
+	start = 0
+	for feature_name in FEATURE_NAMES:
+		end = start + Mi[feature_name]
+		start = end + W[feature_name].shape[1]
+		indices_W[feature_name] = ((end, start))
+
+	end = start + W["qf_total"].shape[1]
+	indices_W["qf_total"] = ((start, end))
+
+	IQR_inverse = np.linalg.inv(np.diag(np.concatenate([scalers[feature_name].scale_ for feature_name in FEATURE_NAMES] + [scalers["qf_total"].scale_])))
+
+	wmf_models = {
+		feature_name: joblib.load(f"training/fma_small/wmf_{feature_name}.joblib")
+		for feature_name in FEATURE_NAMES
+	}
+	wmf_models["qf_total"] = joblib.load(f"training/fma_small/qf_total.joblib")
+	V = {feature_name: wmf_models[feature_name].item_factors for feature_name in wmf_models}
+
+	R = pca.components_.T
+
+	Rprime = IQR_inverse @ R
+
+	start_Ki = {"qf_total": 0}
+	last_start_Ki = 0
+	for feature_name in FEATURE_NAMES:
+		start_Ki[feature_name] = last_start_Ki
+		last_start_Ki += Ki[feature_name]
+	Kprime = last_start_Ki
+
+	flattened_U = cast(scipy.sparse.csr_matrix, flatten_dict(U, sparse=True))
+	flattened_U_transformed = flattened_U @ T_U.T
+	E = postprocessing(scalers, pca, G, W)
+	def to_optimize(theta):
+		started_at2 = perf_counter()
+		if (force_positive_parameters):
+			T_U_tilde_parameters = scipy.special.softplus(theta)
+		else:
+			T_U_tilde_parameters = theta
 		A_U_tilde, b_U_tilde = build_T_tilde(T_U_tilde_parameters, feature_sets_kept, Ki)
 		U_tilde = transform(U_kept, lambda X: build_transformation(A_U_tilde, b_U_tilde)(X, N), all_feature_sets, sparse_format=True, dimensions={key: U[key].shape[1] for key in U})
+		flattened_U_tilde = cast(scipy.sparse.csr_matrix, flatten_dict(U_tilde, sparse=True))
 		W_tilde = compute_wmf(U_tilde)
 
-		E = postprocessing(scalers, pca, G, W)
 		E_tilde = postprocessing(scalers, pca, G_tilde, W_tilde)
 		deltaE = E_tilde - E
-		L = np.linalg.norm(deltaE)
-		return L
+
+		deltaE_RprimeT = deltaE @ Rprime.T
+		gradient_A = np.zeros((Kprime, T_U.shape[0]))
+		gradient_b = np.zeros(Kprime)
+		for feature_name in indices_W:
+			start, end = indices_W[feature_name]
+			Vi = V[feature_name]
+			Di = Vi.shape[1]
+			alpha = wmf_models[feature_name].alpha
+			lambda_ = wmf_models[feature_name]. regularization
+			Wi_tilde = W_tilde[feature_name]
+			if (feature_name == "qf_total"):
+				Ui_tilde = flattened_U_tilde.toarray()
+			else:
+				Ui_tilde = U_tilde[feature_name].toarray()
+			Oi_tilde = 1 + alpha * Ui_tilde
+			pi_tilde = (Ui_tilde > 0).astype(int)
+
+			X = deltaE_RprimeT[:, start:end]
+			Ci_tilde = Oi_tilde[:, :, None]
+			to_inverse = np.matmul(
+				Vi.T[None, :, :],
+				Ci_tilde * Vi[None, :, :],
+			) + lambda_ * np.eye(Di)[None, :, :]
+			solved_X = np.linalg.solve(to_inverse, X[:, :, None])[:, :, 0]
+
+			solved_X_ViT = solved_X @ Vi.T
+			diag_Xprime = solved_X_ViT * (pi_tilde - Wi_tilde @ Vi.T)
+			# X_doubleprime = Oi_tilde * solved_X_ViT
+			li_star_diag_star_Xprime = li_adjoint(
+				alpha * diag_Xprime,
+				Kprime,
+				start_Ki[feature_name],
+				feature_name,
+			)
+			q_total = li_star_diag_star_Xprime
+			if (use_pi_tilde_approx):
+				pi_tilde_approx = sigmoid(k_sigmoid, Ui_tilde)
+				X_doubleprime = Oi_tilde * solved_X_ViT
+				sigma_derivative = k_sigmoid * pi_tilde_approx * (1 - pi_tilde_approx)
+				sigma_derivative_X_doubleprime = sigma_derivative * X_doubleprime
+				li_star_sigma_derivative_X_doubleprime = li_adjoint(
+					sigma_derivative_X_doubleprime,
+					Kprime,
+					start_Ki[feature_name],
+					feature_name,
+				)
+				q_total += li_star_sigma_derivative_X_doubleprime
+
+
+			gradient_A += q_total.T @ flattened_U_transformed
+			gradient_b += q_total.sum(axis=0)
+		gradient = build_T_tilde_adjoint(gradient_A, gradient_b, feature_sets_kept, Ki)
+		gradient += l2_regularization * T_U_tilde_parameters
+		if (force_positive_parameters):
+			gradient_theta = gradient * scipy.special.expit(theta)
+		else:
+			gradient_theta = gradient
+		
+		L = np.linalg.norm(deltaE)**2 + l2_regularization * np.linalg.norm(T_U_tilde_parameters)**2
+
+		normalisation_factor = N*E.shape[1]
+		L /= normalisation_factor
+		gradient_theta /= normalisation_factor
+		print(f"Current loss: {L:.6f}, time elapsed: {perf_counter() - started_at2:.2f} seconds, current min: {np.min(T_U_tilde_parameters):.6f}, current max: {np.max(T_U_tilde_parameters):.6f}, current gradient norm: {np.linalg.norm(gradient_theta):.6f}, current gradient max: {np.max(gradient_theta):.6f}")
+		return L, 2*gradient_theta
 
 	if (old_T_U_tilde is not None):
 		old_A_U_tilde, old_b_U_tilde = old_T_U_tilde
-		x0 = build_T_tilde_adjoint(old_A_U_tilde, old_b_U_tilde, feature_sets_kept, Ki)
+		old_theta = build_T_tilde_adjoint(old_A_U_tilde, old_b_U_tilde, feature_sets_kept, Ki)
+		if (force_positive_parameters):
+			x0 = np.log(np.expm1(old_theta))  # Inverse of softplus
+		else:
+			x0 = old_theta
 	else:
-		x0 = np.hstack([np.zeros(N_params_A), -np.ones(N_params_b)])
-	result = _spsa.minimize(to_optimize, x0, iterations=n_iterations)
+		x0 = np.zeros(N_params_A + N_params_b)
 
-	T_tilde = build_T_tilde(result, feature_sets_kept, Ki)
+	result = scipy.optimize.minimize(to_optimize, x0, jac=True, method="L-BFGS-B")
+
+	if (force_positive_parameters):
+		theta_opt = scipy.special.softplus(result.x)
+	else:
+		theta_opt = result.x
+	T_tilde = build_T_tilde(theta_opt, feature_sets_kept, Ki)
 	print(f"Optimization for U completed in {perf_counter() - started_at:.2f} seconds.")
 	return T_tilde
 
-def optimization_G_and_U(features, feature_sets_kept, Mi, Ki, scalers, pca, n_iterations_spsa=100, n_repeats=2):
+def optimization_G_and_U(features, feature_sets_kept, Mi, Ki, scalers, pca, n_repeats=2):
 	started_at = perf_counter()
 	T_G = T(feature_sets_kept, Mi)
 	T_U = T(feature_sets_kept, Ki)
@@ -337,7 +462,7 @@ def optimization_G_and_U(features, feature_sets_kept, Mi, Ki, scalers, pca, n_it
 	for _ in tqdm(range(n_repeats)):
 		A_G_tilde, b_G_tilde = optimization_G(features, feature_sets_kept, Mi, lambda U, N: T_U_tilde(U @ T_U.T, N), scalers, pca, old_T_G_tilde=(A_G_tilde, b_G_tilde))
 		T_G_tilde = lambda G, N: G @ A_G_tilde.T + np.ones((N, 1)) @ b_G_tilde.T
-		A_U_tilde, b_U_tilde = optimization_U(features, feature_sets_kept, Ki, lambda G, N: T_G_tilde(G @ T_G.T, N), scalers, pca, n_iterations=n_iterations_spsa, old_T_U_tilde=(A_U_tilde, b_U_tilde))
+		A_U_tilde, b_U_tilde = optimization_U(features, feature_sets_kept, Ki, lambda G, N: T_G_tilde(G @ T_G.T, N), scalers, pca, old_T_U_tilde=(A_U_tilde, b_U_tilde))
 		T_U_tilde = lambda U, N: U @ A_U_tilde.T + np.ones((N, 1)) @ b_U_tilde.T 
 
 	print(f"Optimization for G and U completed in {perf_counter() - started_at:.2f} seconds.")
@@ -477,6 +602,6 @@ if (__name__ == "__main__"):
 		dataset.X_train.extend(dataset.X_valid)
 		dataset.y_train.extend(dataset.y_valid)
 	Mi, Ki = get_Mi_Ki()
-	accuracies_U, importances_U = compute_importances_subsets(dataset, None, Mi, Ki, compute_accuracy_after_optimization_G_and_U, max_subset_size=1)
+	accuracies_U, importances_U = compute_importances_subsets(dataset, None, Mi, Ki, compute_accuracy_after_optimization_U, max_subset_size=1)
 	print("accuracies", accuracies_U)
 	print("importances", importances_U)
