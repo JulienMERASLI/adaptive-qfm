@@ -576,10 +576,10 @@ $$
 
 These expressions allows us to compute the gradient of $L$.
 
-In practice, to limit the size of the optimized parameters, a regularization term is added to the loss:
+In practice, a regularization term is added to the loss:
 
 $$
-  L_{\mathrm{reg}} = L + \lambda_U \norm{\theta_U}^2
+  L_{\mathrm{reg}} = \frac{1}{ND'}\norm{(\tilde{E}^{(n)}_{d'})_{n, d'} - (E^{(n)}_{d'})_{n, d'}}^2 + \lambda_U \frac{1}{length(\theta_U)} \norm{\theta_U}^2
 $$
 
 where $\lambda_U \geq 0$ is the regularization coefficient.

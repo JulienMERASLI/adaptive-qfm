@@ -290,7 +290,7 @@ def diag_2d_to_3d(A):
 def sigmoid(k, x):
 	return scipy.special.expit(k * x)
 
-def optimization_U(features, feature_sets_kept, Ki, transformation_G, scalers, pca, old_T_U_tilde=None, k_sigmoid=100, use_pi_tilde_approx=False, force_positive_parameters=True, l2_regularization=0.2):
+def optimization_U(features, feature_sets_kept, Ki, transformation_G, scalers, pca, old_T_U_tilde=None, k_sigmoid=5, use_pi_tilde_approx=True, force_positive_parameters=False, l2_regularization=1e-2):
 	N_params_A, N_params_b = get_N_params(feature_sets_kept, Ki)
 	if (N_params_A + N_params_b == 0):
 		return build_T_tilde([], feature_sets_kept, Ki)
@@ -384,6 +384,10 @@ def optimization_U(features, feature_sets_kept, Ki, transformation_G, scalers, p
 			) + lambda_ * np.eye(Di)[None, :, :]
 			solved_X = np.linalg.solve(to_inverse, X[:, :, None])[:, :, 0]
 
+			cond = np.linalg.cond(to_inverse)
+			if (np.max(cond) > 1e6):
+				print(f"ill-conditioned matrix for feature {feature_name} with condition number {np.max(cond):.2e}")
+
 			solved_X_ViT = solved_X @ Vi.T
 			diag_Xprime = solved_X_ViT * (pi_tilde - Wi_tilde @ Vi.T)
 			# X_doubleprime = Oi_tilde * solved_X_ViT
@@ -411,41 +415,41 @@ def optimization_U(features, feature_sets_kept, Ki, transformation_G, scalers, p
 			gradient_A += q_total.T @ flattened_U_transformed
 			gradient_b += q_total.sum(axis=0)
 		gradient = build_T_tilde_adjoint(gradient_A, gradient_b, feature_sets_kept, Ki)
-		gradient += l2_regularization * T_U_tilde_parameters
+
+		L = np.linalg.norm(deltaE)**2  / (N*E.shape[1]) + l2_regularization * np.linalg.norm(T_U_tilde_parameters)**2 / len(T_U_tilde_parameters)
+
+		gradient = gradient / (N*E.shape[1]) +  l2_regularization * T_U_tilde_parameters / len(T_U_tilde_parameters)
+
 		if (force_positive_parameters):
 			gradient_theta = gradient * scipy.special.expit(theta)
 		else:
 			gradient_theta = gradient
 		
-		L = np.linalg.norm(deltaE)**2 + l2_regularization * np.linalg.norm(T_U_tilde_parameters)**2
-
-		normalisation_factor = N*E.shape[1]
-		L /= normalisation_factor
-		gradient_theta /= normalisation_factor
-		print(f"Current loss: {L:.6f}, time elapsed: {perf_counter() - started_at2:.2f} seconds, current min: {np.min(T_U_tilde_parameters):.6f}, current max: {np.max(T_U_tilde_parameters):.6f}, current gradient norm: {np.linalg.norm(gradient_theta):.6f}, current gradient max: {np.max(gradient_theta):.6f}")
+		print(f"loss: {L:.6f}, time elapsed: {perf_counter() - started_at2:.2f} seconds, min: {np.min(T_U_tilde_parameters):.6f}, max: {np.max(T_U_tilde_parameters):.6f}, gradient norm: {np.linalg.norm(gradient_theta):.6f}, gradient max: {np.max(gradient_theta):.6f}")
 		return L, 2*gradient_theta
 
 	if (old_T_U_tilde is not None):
 		old_A_U_tilde, old_b_U_tilde = old_T_U_tilde
 		old_theta = build_T_tilde_adjoint(old_A_U_tilde, old_b_U_tilde, feature_sets_kept, Ki)
 		if (force_positive_parameters):
-			x0 = np.log(np.expm1(old_theta))  # Inverse of softplus
+			x0 = np.log(np.expm1(1e-4 + old_theta))  # Inverse of softplus
 		else:
 			x0 = old_theta
 	else:
 		x0 = np.zeros(N_params_A + N_params_b)
 
 	result = scipy.optimize.minimize(to_optimize, x0, jac=True, method="L-BFGS-B")
+	x = result.x
 
 	if (force_positive_parameters):
-		theta_opt = scipy.special.softplus(result.x)
+		theta_opt = scipy.special.softplus(x)
 	else:
-		theta_opt = result.x
+		theta_opt = x
 	T_tilde = build_T_tilde(theta_opt, feature_sets_kept, Ki)
 	print(f"Optimization for U completed in {perf_counter() - started_at:.2f} seconds.")
 	return T_tilde
 
-def optimization_G_and_U(features, feature_sets_kept, Mi, Ki, scalers, pca, n_repeats=2):
+def optimization_G_and_U(features, feature_sets_kept, Mi, Ki, scalers, pca, n_repeats=5):
 	started_at = perf_counter()
 	T_G = T(feature_sets_kept, Mi)
 	T_U = T(feature_sets_kept, Ki)
@@ -531,7 +535,8 @@ def load_model_and_features(n_samples=100):
 	scalers = joblib.load(f"training/fma_small/postprocessing_scalers.joblib")
 	pca = joblib.load(f"training/fma_small/postprocessing_pca.joblib")
 	with np.load("training/fma_small/sampled_features.npz") as cached_features:
-		indices = np.random.choice(len(list(cached_features.values())[0]), size=n_samples, replace=False)
+		rng = np.random.default_rng(42)
+		indices = rng.choice(len(list(cached_features.values())[0]), size=n_samples, replace=False)
 		features = {
 			feature_name: cached_features[feature_name][indices]
 			for feature_name in cached_features
@@ -586,12 +591,12 @@ def compute_accuracy_after_optimization_U(dataset, model, feature_sets_kept, Mi,
 
 	return test_transformations(T_U, T_G, T_U_tilde, T_G_tilde, model, model_type, dataset)
 
-def compute_accuracy_after_optimization_G_and_U(dataset, model, feature_sets_kept, Mi, Ki, model_type=lambda: LogisticRegression(max_iter=50000), n_samples=100):
+def compute_accuracy_after_optimization_G_and_U(dataset, model, feature_sets_kept, Mi, Ki, model_type=lambda: LogisticRegression(max_iter=50000), n_samples=10, n_repeats=3):
 	T_G = T(feature_sets_kept, Mi)
 	T_U = T(feature_sets_kept, Ki)
 
 	scalers, pcas, flattened_features = load_model_and_features(n_samples)
-	T_G_tilde, T_U_tilde = optimization_G_and_U(flattened_features, feature_sets_kept, Mi, Ki, scalers, pcas)
+	T_G_tilde, T_U_tilde = optimization_G_and_U(flattened_features, feature_sets_kept, Mi, Ki, scalers, pcas, n_repeats=n_repeats)
 
 	return test_transformations(T_U, T_G, T_U_tilde, T_G_tilde, model, model_type, dataset)
 
@@ -602,6 +607,6 @@ if (__name__ == "__main__"):
 		dataset.X_train.extend(dataset.X_valid)
 		dataset.y_train.extend(dataset.y_valid)
 	Mi, Ki = get_Mi_Ki()
-	accuracies_U, importances_U = compute_importances_subsets(dataset, None, Mi, Ki, compute_accuracy_after_optimization_U, max_subset_size=1)
+	accuracies_U, importances_U = compute_importances_subsets(dataset, None, Mi, Ki, compute_accuracy_after_optimization_U)
 	print("accuracies", accuracies_U)
 	print("importances", importances_U)
