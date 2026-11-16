@@ -10,15 +10,15 @@ $
 # Numbers
 
 - $M$: total number of features
-      <!-- - $M'$: total number of features after PCA -->
+  <!-- - $M'$: total number of features after PCA -->
 - $s$: number of feature sets
-      <!-- - $\tilde{s}$: number of feature sets kept -->
+  <!-- - $\tilde{s}$: number of feature sets kept -->
 - $M_i$: number of features in set $i$: $M = \displaystyle\sum_{i=1}^{s} M_i$
-      <!-- - $M_i'$: number of features in set $i$ after PCA: $M' = \displaystyle\sum_{i=1}^{s} M_i'$ -->
+  <!-- - $M_i'$: number of features in set $i$ after PCA: $M' = \displaystyle\sum_{i=1}^{s} M_i'$ -->
 - $N$: number of inputs
 - $W$: number of windows per input
 - $\tilde{M}$: number of features kept: $\tilde{M} = \displaystyle\sum_{i \in J} M_i$
-      <!-- - $K$: number of clusters -->
+  <!-- - $K$: number of clusters -->
 - $K_i$: number of clusters kept after filter for feature set $i$
 - $K'$: number of clusters kept after filter: $K' = \displaystyle\sum_{i=1}^{s} K_i$
 - $\tilde{K}$: number of clusters kept after filter for feature sets kept: $\tilde{K} = \displaystyle\sum_{i \in J} K_i$
@@ -32,10 +32,10 @@ $
 - $i \in [\![1,s]\!]$: index for feature sets. can also be $total$ to refer to $QF_{total}$
 - $j \in [\![1,M]\!]$: index for features
 - $j_i \in [\![1,M_i]\!]$: index for features inside set $i$
-      <!-- - $j_i' \in [\![1,M_i']\!]$: index for features inside set $i$ after QF PCA -->
+  <!-- - $j_i' \in [\![1,M_i']\!]$: index for features inside set $i$ after QF PCA -->
 - $w \in [\![1,W]\!]$: index for windows
 - $n \in [\![1,N]\!]$: index for inputs
-      <!-- - $k \in [\![1,K]\!]$: index for clusters -->
+  <!-- - $k \in [\![1,K]\!]$: index for clusters -->
 - $k_i \in [\![1,K_i]\!]$: index for clusters of feature set $i$ after filter
 - $d_i \in [\![1,D_i]\!]$: index for dimension of WMF embedding of feature set $i$
 - $d_i' \in [\![1,D_i + 2M_i]\!]$: index for dimension of block after concatenation of QF and G1 modules of feature set $i$
@@ -265,7 +265,7 @@ $$
 
 where $\tilde{E}$ is computed using the approximations $\tilde{G}$ and $\tilde{U}$.
 
-These transformations are not invertible, so we cannot use $\tilde{T}={A}^+={(A^T A)^{-1}A^T}$. In this case, using pseudoinverse is equivalent to filling the missing values with zeros: ${A}^+ = A^T$.
+These transformations are not invertible, so we cannot use $\tilde{T}={A}^+={(A^T A)^{-1}A^T}$. In this case, using pseudoinverse is equivalent to filling the missing values with zeros: ${A}^+ = A^T(A A^T)^{-1} = A^T$.
 
 For an set of indices $J$ and a score function $S_E$ correspond to the performance metric of the model using a set $E$ of indices, we can define the importance of the remaining indices as:
 

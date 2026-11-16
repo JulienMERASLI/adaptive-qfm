@@ -24,12 +24,12 @@ def T(feature_sets_kept, feature_sets_length):
 	for i_prime in J:
 		blocks_iprime = []
 		for i in range(len(feature_sets_length)):
-			size_i = list(feature_sets_length.values())[i]
-			size_iprime = list(feature_sets_length.values())[i_prime]
+			length_i = list(feature_sets_length.values())[i]
+			length_iprime = list(feature_sets_length.values())[i_prime]
 			if i == i_prime:
-				block = np.eye(size_i)
+				block = np.eye(length_i)
 			else: 
-				block = np.zeros((size_iprime, size_i))
+				block = np.zeros((length_iprime, length_i))
 			blocks_iprime.append(block)
 		blocks.append(blocks_iprime)
 
@@ -42,26 +42,26 @@ def build_T_tilde(params, feature_sets_kept, feature_sets_length):
 	start = 0
 	for i in range(len(feature_sets_length)):
 		blocks_A_i = []
-		size_i = list(feature_sets_length.values())[i]
+		length_i = list(feature_sets_length.values())[i]
 		for i_prime in J:
-			size_iprime = list(feature_sets_length.values())[i_prime]
+			length_iprime = list(feature_sets_length.values())[i_prime]
 			if i == i_prime:
-				block_A = np.eye(size_i)
+				block_A = np.eye(length_i)
 			else: 
 				if (i in J):
-					block_A = np.zeros((size_i, size_iprime))
+					block_A = np.zeros((length_i, length_iprime))
 				else:
-					end = start + size_i * size_iprime
-					block_A = params[start:end].reshape((size_i, size_iprime))
+					end = start + length_i * length_iprime
+					block_A = params[start:end].reshape((length_i, length_iprime))
 					start = end
 			blocks_A_i.append(block_A)
 		blocks_A.append(blocks_A_i)
 
 		if (i in J):
-			block_b = np.zeros((size_i, 1))
+			block_b = np.zeros((length_i, 1))
 		else:
-			end = start + size_i
-			block_b = params[start:end].reshape((size_i, 1))
+			end = start + length_i
+			block_b = params[start:end].reshape((length_i, 1))
 			start = end
 		blocks_b.append(block_b)
 
@@ -80,13 +80,13 @@ def build_T_tilde_adjoint(GA, Gb, feature_sets_kept, feature_sets_length):
 
 	for i in range(len(feature_sets_length)):
 
-		size_i = list(feature_sets_length.values())[i]
+		length_i = list(feature_sets_length.values())[i]
 
 		col_start = 0
 
 		for i_prime in J:
 
-			size_iprime = list(feature_sets_length.values())[i_prime]
+			length_iprime = list(feature_sets_length.values())[i_prime]
 
 			if i == i_prime:
 				pass
@@ -97,25 +97,25 @@ def build_T_tilde_adjoint(GA, Gb, feature_sets_kept, feature_sets_length):
 
 				else:
 					block_grad = GA[
-						row_start:row_start + size_i,
-						col_start:col_start + size_iprime
+						row_start:row_start + length_i,
+						col_start:col_start + length_iprime
 					]
 
 					gradients.append(block_grad.ravel())
 
-			col_start += size_iprime
+			col_start += length_iprime
 
 		if i in J:
 			pass
 
 		else:
 			block_grad_b = Gb[
-				row_start:row_start + size_i
+				row_start:row_start + length_i
 			]
 
 			gradients.append(block_grad_b.ravel())
 
-		row_start += size_i
+		row_start += length_i
 
 	return np.concatenate(gradients)
 
@@ -138,24 +138,16 @@ def get_N_params(feature_sets_kept, feature_sets_length):
 	Ktilde = sum(feature_sets_length[feature_name] for feature_name in feature_sets_kept if feature_sets_kept[feature_name])
 	return Ktilde * (Kprime - Ktilde), Kprime - Ktilde # blocks for i,j in J are identity for A, and 0 for b.
 
-def test_pseudoinverse(dataset, model, feature_sets_kept, Mi, Ki, model_type = lambda: LogisticRegression(max_iter=50000)):
+def compute_accuracy_pseudoinverse(dataset, model, feature_sets_kept, Mi, Ki, model_type = lambda: LogisticRegression(max_iter=50000)):
 	A_G = T(feature_sets_kept, Mi)
 	A_G_tilde = np.transpose(A_G)
-	transformation_G = build_transformation(A_G_tilde @ A_G)
+	transformation_G = build_transformation(A_G_tilde)
 
 	A_U = T(feature_sets_kept, Ki)
 	A_U_tilde = np.transpose(A_U)
-	transformation_U = build_transformation(A_U_tilde @ A_U)
+	transformation_U = build_transformation(A_U_tilde)
 
-	if (model == None):
-		train_embeddings = extract_and_infer_qfm_embeddings(dataset.X_train, features_path=f"training/gtzan_train_features.npz", transformation_G=transformation_G, transformation_U=transformation_U)
-		model = model_type()
-		model.fit(train_embeddings, dataset.y_train)
-	test_embeddings = extract_and_infer_qfm_embeddings(dataset.X_test, features_path=f"training/gtzan_test_features.npz", transformation_G=transformation_G, transformation_U=transformation_U)
-	predictions = model.predict_proba(test_embeddings)
-	
-	accuracy = compute_accuracy_genre_classification(dataset.y_test, predictions, model)
-	return accuracy
+	return test_transformations(A_U, A_G, transformation_U, transformation_G, model, model_type, dataset), A_G_tilde, np.zeros((A_G.shape[1])), A_U_tilde, np.zeros((A_U.shape[1]))
 
 def solve_matrix_least_squares(A1, B1, A2, B2, Y, feature_sets_kept, feature_sets_length, x0=None):
 	# solve argmin ||A1 X1 B1 + A2 X2 B2 - Y||_F
@@ -208,7 +200,7 @@ def solve_matrix_least_squares(A1, B1, A2, B2, Y, feature_sets_kept, feature_set
 	Y_adjusted = Y.ravel() - c
 
 	# Solve min ||L x - Y||
-	result = lsmr(L, Y_adjusted, x0=x0)
+	result = lsmr(L, Y_adjusted, x0=x0, show=True)
 
 	x = result[0]
 
@@ -290,7 +282,7 @@ def diag_2d_to_3d(A):
 def sigmoid(k, x):
 	return scipy.special.expit(k * x)
 
-def optimization_U(features, feature_sets_kept, Ki, transformation_G, scalers, pca, old_T_U_tilde=None, k_sigmoid=5, use_pi_tilde_approx=True, force_positive_parameters=False, l2_regularization=1e-2):
+def optimization_U(features, feature_sets_kept, Ki, transformation_G, scalers, pca, old_T_U_tilde=None, k_sigmoid=5, use_pi_tilde_approx=True, force_positive_parameters=False, l2_regularization=1e-2, check_conditioning=False):
 	N_params_A, N_params_b = get_N_params(feature_sets_kept, Ki)
 	if (N_params_A + N_params_b == 0):
 		return build_T_tilde([], feature_sets_kept, Ki)
@@ -384,13 +376,14 @@ def optimization_U(features, feature_sets_kept, Ki, transformation_G, scalers, p
 			) + lambda_ * np.eye(Di)[None, :, :]
 			solved_X = np.linalg.solve(to_inverse, X[:, :, None])[:, :, 0]
 
-			cond = np.linalg.cond(to_inverse)
-			if (np.max(cond) > 1e6):
-				print(f"ill-conditioned matrix for feature {feature_name} with condition number {np.max(cond):.2e}")
+			if (check_conditioning):
+				cond = np.linalg.cond(to_inverse)
+				if (np.max(cond) > 1e6):
+					print(f"ill-conditioned matrix for feature {feature_name} with condition number {np.max(cond):.2e}")
 
 			solved_X_ViT = solved_X @ Vi.T
 			diag_Xprime = solved_X_ViT * (pi_tilde - Wi_tilde @ Vi.T)
-			# X_doubleprime = Oi_tilde * solved_X_ViT
+
 			li_star_diag_star_Xprime = li_adjoint(
 				alpha * diag_Xprime,
 				Kprime,
@@ -470,7 +463,7 @@ def optimization_G_and_U(features, feature_sets_kept, Mi, Ki, scalers, pca, n_re
 		T_U_tilde = lambda U, N: U @ A_U_tilde.T + np.ones((N, 1)) @ b_U_tilde.T 
 
 	print(f"Optimization for G and U completed in {perf_counter() - started_at:.2f} seconds.")
-	return T_G_tilde, T_U_tilde
+	return A_G_tilde, b_G_tilde, A_U_tilde, b_U_tilde
 
 def get_Mi_Ki(model_path = "training/fma_small", clustering_method = "kmeans"):
 	unigram_archive_path = f"{model_path}/{clustering_method}_unigrams.npz"
@@ -482,21 +475,31 @@ def get_Mi_Ki(model_path = "training/fma_small", clustering_method = "kmeans"):
 
 	return Mi, Ki
 
-def compute_importances_subsets(dataset, model, Mi, Ki, fn, max_subset_size = len(FEATURE_NAMES) - 1, model_type = lambda: LogisticRegression(max_iter=50000), *args, **kwargs):
+def compute_importances_subsets(dataset, model, Mi, Ki, fn, max_subset_size = len(FEATURE_NAMES) - 1, model_type = lambda: LogisticRegression(max_iter=50000), filename=None, *args, **kwargs):
 	feature_sets = {feature_name: True for feature_name in FEATURE_NAMES}
 	accuracies = {}
 	subsets = [list(combinations(feature_sets.keys(), r)) for r in range(1, max_subset_size + 1)]  
 	subsets = [list(sublist) for g in subsets for sublist in g]  
 
+	transformations = {}
+
 	for subset in tqdm(subsets):
 		feature_sets_kept = feature_sets.copy()
 		for feature_name in subset:
 			feature_sets_kept[feature_name] = False
-		accuracies["_".join(subset)] = fn(dataset, model, feature_sets_kept, Mi, Ki, model_type=model_type, *args, **kwargs)
 
-	baseline = fn(dataset, model, feature_sets, Mi, Ki)
+		subset_key = "_".join(subset)
+		accuracies[subset_key], A_G_tilde, b_G_tilde, A_U_tilde, b_U_tilde = fn(dataset, model, feature_sets_kept, Mi, Ki, model_type=model_type, *args, **kwargs)
+
+		transformations[f"{subset_key}_A_G"] = A_G_tilde
+		transformations[f"{subset_key}_b_G"] = b_G_tilde
+		transformations[f"{subset_key}_A_U"] = A_U_tilde
+		transformations[f"{subset_key}_b_U"] = b_U_tilde
+
+	baseline = fn(dataset, model, feature_sets, Mi, Ki)[0]
 	importances = {"_".join(subset): (baseline - accuracies["_".join(subset)]) / baseline for subset in subsets}
-
+	if (filename is not None):
+		np.savez_compressed(f"training/fma_small/transformations_{filename}.npz", **transformations)
 	return accuracies, importances
 
 def test_first_order_approximation(importances, max_subset_size = len(FEATURE_NAMES) - 1):
@@ -531,12 +534,13 @@ def test_first_order_approximation(importances, max_subset_size = len(FEATURE_NA
 
 
 
-def load_model_and_features(n_samples=100):
+def load_model_and_features(n_samples = None):
 	scalers = joblib.load(f"training/fma_small/postprocessing_scalers.joblib")
 	pca = joblib.load(f"training/fma_small/postprocessing_pca.joblib")
 	with np.load("training/fma_small/sampled_features.npz") as cached_features:
 		rng = np.random.default_rng(42)
-		indices = rng.choice(len(list(cached_features.values())[0]), size=n_samples, replace=False)
+		N = len(list(cached_features.values())[0])
+		indices = rng.choice(N, size=n_samples, replace=False) if n_samples != None and n_samples < N else np.arange(N)
 		features = {
 			feature_name: cached_features[feature_name][indices]
 			for feature_name in cached_features
@@ -561,7 +565,7 @@ def test_transformations(T_U, T_G, T_U_tilde, T_G_tilde, model, model_type, data
 	return accuracy
 
 
-def compute_accuracy_after_optimization_G(dataset, model, feature_sets_kept, Mi, Ki, T_U_tilde=None, model_type=lambda: LogisticRegression(max_iter=50000), n_samples=100):
+def compute_accuracy_after_optimization_G(dataset, model, feature_sets_kept, Mi, Ki, T_U_tilde=None, model_type=lambda: LogisticRegression(max_iter=50000), n_samples=None):
 	scalers, pca, flattened_features = load_model_and_features(n_samples)
 	T_U = T(feature_sets_kept, Ki)
 	if (T_U_tilde is None):
@@ -574,7 +578,7 @@ def compute_accuracy_after_optimization_G(dataset, model, feature_sets_kept, Mi,
 
 	T_G_tilde = lambda U, N: U @ A_G_tilde.T + np.ones((N, 1)) @ b_G_tilde.T
 
-	return test_transformations(T_U, T_G, T_U_tilde, T_G_tilde, model, model_type, dataset)
+	return test_transformations(T_U, T_G, T_U_tilde, T_G_tilde, model, model_type, dataset), A_G_tilde, b_G_tilde, T_U.T, np.zeros((T_G.shape[1]))
 
 def compute_accuracy_after_optimization_U(dataset, model, feature_sets_kept, Mi, Ki, T_G_tilde=None, model_type=lambda: LogisticRegression(max_iter=50000), n_samples=100):
 	scalers, pca, flattened_features = load_model_and_features(n_samples)
@@ -589,16 +593,19 @@ def compute_accuracy_after_optimization_U(dataset, model, feature_sets_kept, Mi,
 
 	T_U_tilde = lambda U, N: U @ A_U_tilde.T + np.ones((N, 1)) @ b_U_tilde.T
 
-	return test_transformations(T_U, T_G, T_U_tilde, T_G_tilde, model, model_type, dataset)
+	return test_transformations(T_U, T_G, T_U_tilde, T_G_tilde, model, model_type, dataset), T_G.T, np.zeros((T_G.shape[1])), A_U_tilde, b_U_tilde
 
 def compute_accuracy_after_optimization_G_and_U(dataset, model, feature_sets_kept, Mi, Ki, model_type=lambda: LogisticRegression(max_iter=50000), n_samples=10, n_repeats=3):
 	T_G = T(feature_sets_kept, Mi)
 	T_U = T(feature_sets_kept, Ki)
 
 	scalers, pcas, flattened_features = load_model_and_features(n_samples)
-	T_G_tilde, T_U_tilde = optimization_G_and_U(flattened_features, feature_sets_kept, Mi, Ki, scalers, pcas, n_repeats=n_repeats)
+	
+	A_G_tilde, b_G_tilde, A_U_tilde, b_U_tilde = optimization_G_and_U(flattened_features, feature_sets_kept, Mi, Ki, scalers, pcas, n_repeats=n_repeats)
+	T_U_tilde = build_transformation(A_U_tilde, b_U_tilde)
+	T_G_tilde = build_transformation(A_G_tilde, b_G_tilde)
 
-	return test_transformations(T_U, T_G, T_U_tilde, T_G_tilde, model, model_type, dataset)
+	return test_transformations(T_U, T_G, T_U_tilde, T_G_tilde, model, model_type, dataset), A_G_tilde, b_G_tilde, A_U_tilde, b_U_tilde
 
 if (__name__ == "__main__"):
 	model = joblib.load(f"training/genre_classification_model_kmeans_fma_small.joblib")
@@ -607,6 +614,6 @@ if (__name__ == "__main__"):
 		dataset.X_train.extend(dataset.X_valid)
 		dataset.y_train.extend(dataset.y_valid)
 	Mi, Ki = get_Mi_Ki()
-	accuracies_U, importances_U = compute_importances_subsets(dataset, None, Mi, Ki, compute_accuracy_after_optimization_U)
-	print("accuracies", accuracies_U)
-	print("importances", importances_U)
+	accuracies, importances = compute_importances_subsets(dataset, None, Mi, Ki, compute_accuracy_after_optimization_G, filename="G_samples=None")
+	print("accuracies", accuracies)
+	print("importances", importances)
